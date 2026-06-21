@@ -4,6 +4,7 @@ import { CompanyLogo } from "@/components/brand";
 import { RatingForm } from "@/components/rating-form";
 import { copy, resolveLocale } from "@/lib/i18n";
 import { prisma } from "@/lib/db";
+import { getDatabaseSetupError } from "@/lib/setup";
 
 export default async function PublicReviewPage({
   params,
@@ -16,6 +17,19 @@ export default async function PublicReviewPage({
   const query = await searchParams;
   const locale = resolveLocale(query.lang);
   const t = copy[locale];
+  const databaseError = getDatabaseSetupError();
+
+  if (databaseError) {
+    return (
+      <div className="review-wrap">
+        <div className="review-card">
+          <h1 style={{ fontSize: 34 }}>{t.unavailable}</h1>
+          <p className="muted">{databaseError}</p>
+        </div>
+      </div>
+    );
+  }
+
   const company = await prisma.company.findUnique({ where: { slug } });
 
   if (!company) notFound();
@@ -54,4 +68,3 @@ export default async function PublicReviewPage({
     </div>
   );
 }
-

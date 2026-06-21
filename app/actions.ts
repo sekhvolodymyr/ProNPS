@@ -13,7 +13,7 @@ import { createUniqueCompanySlug } from "@/lib/slug";
 import { loginSchema, passwordResetRequestSchema, registerSchema, resetPasswordSchema, reviewSchema, thankYouSettingsSchema } from "@/lib/validation";
 import { rateLimit } from "@/lib/rate-limit";
 import { sendNegativeReviewAlert, sendPasswordResetEmail, sendVerificationEmail } from "@/lib/email";
-import { databaseSetupMessage, isDatabaseConfigured } from "@/lib/setup";
+import { databaseUnavailableMessage, getDatabaseSetupError, logServerError } from "@/lib/setup";
 
 function appUrl() {
   return process.env.APP_URL ?? "http://localhost:3000";
@@ -44,7 +44,8 @@ async function saveLogo(file: File | null) {
 }
 
 export async function registerAction(_state: unknown, formData: FormData) {
-  if (!isDatabaseConfigured()) return { error: databaseSetupMessage };
+  const databaseError = getDatabaseSetupError();
+  if (databaseError) return { error: databaseError };
 
   const parsed = registerSchema.safeParse({
     companyName: formString(formData, "companyName"),
@@ -59,9 +60,6 @@ export async function registerAction(_state: unknown, formData: FormData) {
   const rate = rateLimit(`register:${parsed.data.email}`, 5, 60 * 60 * 1000);
   if (!rate.ok) return { error: "Забагато спроб. Спробуйте пізніше." };
 
-  const existing = await prisma.user.findUnique({ where: { email: parsed.data.email } });
-  if (existing) return { error: "Користувач з таким email вже існує." };
-
   let logoUrl: string | null = null;
   try {
     const logo = formData.get("logo");
@@ -70,47 +68,57 @@ export async function registerAction(_state: unknown, formData: FormData) {
     return { error: "Лого має бути PNG, JPG або WEBP до 2 MB." };
   }
 
-  const passwordHash = await hashPassword(parsed.data.password);
-  const slug = await createUniqueCompanySlug(parsed.data.companyName);
+  try {
+    const existing = await prisma.user.findUnique({ where: { email: parsed.data.email.toLowerCase() } });
+    if (existing) return { error: "Користувач з таким email вже існує." };
 
-  const user = await prisma.user.create({
-    data: {
-      email: parsed.data.email.toLowerCase(),
-      passwordHash,
-      company: {
-        create: {
-          name: parsed.data.companyName,
-          category: parsed.data.category,
-          website: parsed.data.website || null,
-          slug,
-          logoUrl,
-          thankYouSettings: {
-            create: {
-              title: "Дякуємо за ваш відгук",
-              message: "Ми цінуємо вашу думку і використаємо її, щоб стати кращими.",
-              bonusEnabled: true,
-              bonusText: "Покажіть цю сторінку команді компанії, щоб отримати бонус.",
-              promoCode: "THANKYOU",
-              buttonLabel: "Перейти на сайт",
-              buttonUrl: parsed.data.website || null,
+    const passwordHash = await hashPassword(parsed.data.password);
+    const slug = await createUniqueCompanySlug(parsed.data.companyName);
+
+    const user = await prisma.user.create({
+      data: {
+        email: parsed.data.email.toLowerCase(),
+        passwordHash,
+        company: {
+          create: {
+            name: parsed.data.companyName,
+            category: parsed.data.category,
+            website: parsed.data.website || null,
+            slug,
+            logoUrl,
+            thankYouSettings: {
+              create: {
+                title: "Дякуємо за ваш відгук",
+                message: "Ми цінуємо вашу думку і використаємо її, щоб стати кращими.",
+                bonusEnabled: true,
+                bonusText: "Покажіть цю сторінку команді компанії, щоб отримати бонус.",
+                promoCode: "THANKYOU",
+                buttonLabel: "Перейти на сайт",
+                buttonUrl: parsed.data.website || null,
+              },
             },
           },
         },
       },
-    },
-  });
+    });
 
-  const token = createToken();
-  await prisma.emailVerificationToken.create({
-    data: { userId: user.id, tokenHash: hashToken(token), expiresAt: addHours(new Date(), 24) },
-  });
-  await sendVerificationEmail(user.email, `${appUrl()}/verify-email?token=${token}`);
-  await createSession(user.id);
+    const token = createToken();
+    await prisma.emailVerificationToken.create({
+      data: { userId: user.id, tokenHash: hashToken(token), expiresAt: addHours(new Date(), 24) },
+    });
+    await sendVerificationEmail(user.email, `${appUrl()}/verify-email?token=${token}`);
+    await createSession(user.id);
+  } catch (error) {
+    logServerError("registerAction", error);
+    return { error: databaseUnavailableMessage };
+  }
+
   redirect("/dashboard");
 }
 
 export async function loginAction(_state: unknown, formData: FormData) {
-  if (!isDatabaseConfigured()) return { error: databaseSetupMessage };
+  const databaseError = getDatabaseSetupError();
+  if (databaseError) return { error: databaseError };
 
   const parsed = loginSchema.safeParse({
     email: formString(formData, "email"),
@@ -121,13 +129,21 @@ export async function loginAction(_state: unknown, formData: FormData) {
   const rate = rateLimit(`login:${parsed.data.email}`, 10, 15 * 60 * 1000);
   if (!rate.ok) return { error: "Забагато спроб входу. Спробуйте пізніше." };
 
-  const user = await prisma.user.findUnique({ where: { email: parsed.data.email.toLowerCase() } });
-  if (!user || !(await verifyPassword(parsed.data.password, user.passwordHash))) {
-    return { error: "Невірний email або пароль." };
+  let userRole: "OWNER" | "ADMIN" = "OWNER";
+  try {
+    const user = await prisma.user.findUnique({ where: { email: parsed.data.email.toLowerCase() } });
+    if (!user || !(await verifyPassword(parsed.data.password, user.passwordHash))) {
+      return { error: "Невірний email або пароль." };
+    }
+
+    await createSession(user.id);
+    userRole = user.role;
+  } catch (error) {
+    logServerError("loginAction", error);
+    return { error: databaseUnavailableMessage };
   }
 
-  await createSession(user.id);
-  redirect(user.role === "ADMIN" ? "/admin" : "/dashboard");
+  redirect(userRole === "ADMIN" ? "/admin" : "/dashboard");
 }
 
 export async function logoutAction() {
@@ -136,7 +152,7 @@ export async function logoutAction() {
 }
 
 export async function resendVerificationAction() {
-  if (!isDatabaseConfigured()) return;
+  if (getDatabaseSetupError()) return;
 
   const { user } = await requireOwnerCompany();
   if (user.emailVerifiedAt) return;
@@ -149,7 +165,8 @@ export async function resendVerificationAction() {
 }
 
 export async function submitReviewAction(slug: string, _state: unknown, formData: FormData) {
-  if (!isDatabaseConfigured()) return { error: databaseSetupMessage };
+  const databaseError = getDatabaseSetupError();
+  if (databaseError) return { error: databaseError };
 
   const parsed = reviewSchema.safeParse({
     rating: formString(formData, "rating"),
@@ -167,36 +184,42 @@ export async function submitReviewAction(slug: string, _state: unknown, formData
   const rate = rateLimit(`review:${slug}:${ip}`, 3, 10 * 60 * 1000);
   if (!rate.ok) return { error: "Забагато відгуків. Спробуйте пізніше." };
 
-  const company = await prisma.company.findUnique({
-    where: { slug },
-    include: { owner: true },
-  });
-  if (!company || company.status === "disabled") return { error: "Сторінка недоступна." };
+  try {
+    const company = await prisma.company.findUnique({
+      where: { slug },
+      include: { owner: true },
+    });
+    if (!company || company.status === "disabled") return { error: "Сторінка недоступна." };
 
-  const review = await prisma.review.create({
-    data: {
-      companyId: company.id,
-      rating: parsed.data.rating,
-      comment: parsed.data.comment,
-      contact: parsed.data.contact || null,
-      source: parsed.data.source || null,
-      metadata: {
-        ipHash: hashToken(ip),
-        userAgent: headerStore.get("user-agent"),
-        locale: headerStore.get("accept-language"),
+    const review = await prisma.review.create({
+      data: {
+        companyId: company.id,
+        rating: parsed.data.rating,
+        comment: parsed.data.comment,
+        contact: parsed.data.contact || null,
+        source: parsed.data.source || null,
+        metadata: {
+          ipHash: hashToken(ip),
+          userAgent: headerStore.get("user-agent"),
+          locale: headerStore.get("accept-language"),
+        },
       },
-    },
-  });
+    });
 
-  if (review.rating <= 3 && company.negativeAlertEnabled && company.owner.emailVerifiedAt) {
-    await sendNegativeReviewAlert(company.owner.email, company.name, review.rating, review.comment);
+    if (review.rating <= 3 && company.negativeAlertEnabled && company.owner.emailVerifiedAt) {
+      await sendNegativeReviewAlert(company.owner.email, company.name, review.rating, review.comment);
+    }
+  } catch (error) {
+    logServerError("submitReviewAction", error);
+    return { error: databaseUnavailableMessage };
   }
 
   redirect(`/r/${slug}/thanks`);
 }
 
 export async function updateSettingsAction(_state: unknown, formData: FormData) {
-  if (!isDatabaseConfigured()) return { error: databaseSetupMessage };
+  const databaseError = getDatabaseSetupError();
+  if (databaseError) return { error: databaseError };
 
   const { company } = await requireOwnerCompany();
   const parsed = thankYouSettingsSchema.safeParse({
@@ -245,7 +268,7 @@ export async function updateSettingsAction(_state: unknown, formData: FormData) 
 }
 
 export async function archiveReviewAction(reviewId: string) {
-  if (!isDatabaseConfigured()) return;
+  if (getDatabaseSetupError()) return;
 
   const { company } = await requireOwnerCompany();
   await prisma.review.updateMany({
@@ -256,7 +279,8 @@ export async function archiveReviewAction(reviewId: string) {
 }
 
 export async function requestPasswordResetAction(_state: unknown, formData: FormData) {
-  if (!isDatabaseConfigured()) return { error: databaseSetupMessage };
+  const databaseError = getDatabaseSetupError();
+  if (databaseError) return { error: databaseError };
 
   const parsed = passwordResetRequestSchema.safeParse({ email: formString(formData, "email") });
   if (!parsed.success) return { error: "Вкажіть коректний email." };
@@ -272,7 +296,8 @@ export async function requestPasswordResetAction(_state: unknown, formData: Form
 }
 
 export async function resetPasswordAction(_state: unknown, formData: FormData) {
-  if (!isDatabaseConfigured()) return { error: databaseSetupMessage };
+  const databaseError = getDatabaseSetupError();
+  if (databaseError) return { error: databaseError };
 
   const parsed = resetPasswordSchema.safeParse({
     token: formString(formData, "token"),
@@ -295,7 +320,7 @@ export async function resetPasswordAction(_state: unknown, formData: FormData) {
 }
 
 export async function disableCompanyAction(companyId: string) {
-  if (!isDatabaseConfigured()) return;
+  if (getDatabaseSetupError()) return;
 
   await requireAdmin();
   await prisma.company.update({ where: { id: companyId }, data: { status: "disabled" } });
@@ -303,7 +328,7 @@ export async function disableCompanyAction(companyId: string) {
 }
 
 export async function enableCompanyAction(companyId: string) {
-  if (!isDatabaseConfigured()) return;
+  if (getDatabaseSetupError()) return;
 
   await requireAdmin();
   await prisma.company.update({ where: { id: companyId }, data: { status: "active" } });

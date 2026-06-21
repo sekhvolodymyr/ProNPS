@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { CompanyLogo } from "@/components/brand";
 import { copy, resolveLocale } from "@/lib/i18n";
 import { prisma } from "@/lib/db";
+import { getDatabaseSetupError } from "@/lib/setup";
 
 export default async function ThanksPage({
   params,
@@ -14,6 +15,20 @@ export default async function ThanksPage({
   const { slug } = await params;
   const { lang } = await searchParams;
   const locale = resolveLocale(lang);
+  const databaseError = getDatabaseSetupError();
+
+  if (databaseError) {
+    return (
+      <div className="review-wrap">
+        <div className="review-card">
+          <h1 style={{ fontSize: 42 }}>{copy[locale].thanks}</h1>
+          <p className="lead">{databaseError}</p>
+          <Link className="button secondary" href="/">На головну</Link>
+        </div>
+      </div>
+    );
+  }
+
   const company = await prisma.company.findUnique({
     where: { slug },
     include: { thankYouSettings: true },
@@ -47,4 +62,3 @@ export default async function ThanksPage({
     </div>
   );
 }
-

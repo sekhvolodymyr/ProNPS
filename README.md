@@ -14,6 +14,29 @@ MVP for private customer feedback collection and 1-5 star loyalty metrics.
 
 1. Copy `.env.example` to `.env`.
 2. Set `DATABASE_URL`, `AUTH_SECRET`, and `APP_URL`.
+3. Set Supabase server SDK values from the Supabase dashboard Connect dialog:
+   - `SUPABASE_URL`
+   - `SUPABASE_PUBLISHABLE_KEY`
+   - `SUPABASE_SECRET_KEY`
+   - `SUPABASE_JWKS_URL`
+
+Never commit `.env` or any secret key.
+
+For Supabase Postgres in local development, prefer the pooler connection string for `DATABASE_URL` if the direct `db.*.supabase.co:5432` host is not reachable from your network.
+
+## Supabase Server SDK
+
+The project includes `@supabase/server` for request handlers that need Supabase header-based auth.
+
+Example routes:
+
+- `GET /api/supabase/health` uses `auth: "none"` and verifies SDK env resolution.
+- `GET /api/supabase/reviews` uses `auth: "user"` and requires `Authorization: Bearer <jwt>`.
+
+`ctx.supabase` is RLS-scoped. `ctx.supabaseAdmin` bypasses RLS and must only be used in trusted server-side handlers.
+
+Continue setup:
+
 3. Install dependencies:
 
 ```bash

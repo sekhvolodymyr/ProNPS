@@ -2,10 +2,10 @@ import Link from "next/link";
 import { ActionForm } from "@/components/forms";
 import { Brand } from "@/components/brand";
 import { registerAction } from "@/app/actions";
-import { databaseSetupMessage, isDatabaseConfigured } from "@/lib/setup";
+import { getDatabaseSetupError } from "@/lib/setup";
 
 export default function RegisterPage() {
-  const dbReady = isDatabaseConfigured();
+  const databaseError = getDatabaseSetupError();
 
   return (
     <div className="auth-wrap">
@@ -13,7 +13,7 @@ export default function RegisterPage() {
         <Brand />
         <h1 style={{ fontSize: 42, marginTop: 24 }}>Реєстрація компанії</h1>
         <p className="muted">Створіть кабінет, отримайте посилання та QR-код для збору відгуків.</p>
-        {!dbReady ? <div className="error">{databaseSetupMessage}</div> : null}
+        {databaseError ? <div className="error">{databaseError}</div> : null}
         <ActionForm action={registerAction} encType="multipart/form-data">
           <label className="field">Назва компанії<input name="companyName" required /></label>
           <label className="field">Категорія<input name="category" placeholder="Клініка, салон, ресторан..." required /></label>

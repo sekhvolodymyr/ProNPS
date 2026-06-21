@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { createToken, hashToken } from "@/lib/crypto";
+import { getDatabaseSetupError } from "@/lib/setup";
 
 const SESSION_COOKIE = "pronps_session";
 const SESSION_DAYS = 30;
@@ -37,13 +38,15 @@ export async function createSession(userId: string) {
 export async function destroySession() {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
-  if (token) {
+  if (token && !getDatabaseSetupError()) {
     await prisma.session.deleteMany({ where: { tokenHash: hashToken(token) } });
   }
   cookieStore.delete(SESSION_COOKIE);
 }
 
 export async function getCurrentUser() {
+  if (getDatabaseSetupError()) return null;
+
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
   if (!token) return null;
@@ -79,4 +82,3 @@ export async function requireAdmin() {
   if (user.role !== "ADMIN") redirect("/dashboard");
   return user;
 }
-
