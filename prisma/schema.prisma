@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+}
+
+enum CompanyStatus {
+  active
+  disabled
+}
+
+enum ReviewStatus {
+  active
+  archived
+}
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  role            Role      @default(OWNER)
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  company                 Company?
+  sessions                Session[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Company {
+  id                   String        @id @default(cuid())
+  ownerId              String        @unique
+  name                 String
+  category             String
+  website              String?
+  slug                 String        @unique
+  logoUrl              String?
+  status               CompanyStatus @default(active)
+  plan                 String        @default("free")
+  subscriptionStatus   String        @default("none")
+  negativeAlertEnabled Boolean       @default(true)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  owner            User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  reviews          Review[]
+  thankYouSettings ThankYouSettings?
+}
+
+model Review {
+  id        String       @id @default(cuid())
+  companyId String
+  rating    Int
+  comment   String
+  contact   String?
+  source    String?
+  status    ReviewStatus @default(active)
+  metadata  Json?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, createdAt])
+  @@index([companyId, rating])
+  @@index([companyId, status])
+}
+
+model ThankYouSettings {
+  id           String   @id @default(cuid())
+  companyId    String   @unique
+  title        String
+  message      String
+  bonusEnabled Boolean  @default(true)
+  bonusText    String?
+  promoCode    String?
+  buttonLabel  String?
+  buttonUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
